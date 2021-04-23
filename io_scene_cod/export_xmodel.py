@@ -46,7 +46,7 @@ def mesh_triangulate(mesh, vertex_cleanup):
     bm.to_mesh(mesh)
     bm.free()
 
-    mesh.update(calc_edges=True, calc_edges_loose=True)
+    mesh.update(calc_tessface=True)
 
 
 def gather_exportable_objects(self, context,
@@ -142,32 +142,32 @@ def material_gen_image_dict(material):
     Generate a PyCoD compatible image dict from a given Blender material
     '''
     out = {}
-    # if not material:
-    #     return out
-    # unk_count = 0
-    # for slot in material.texture_slots:
-    #     if slot is None:
-    #         continue
-    #     texture = slot.texture
-    #     if texture is None:
-    #         continue
-    #     if texture.type == 'IMAGE':
-    #         try:
-    #             tex_img = slot.texture.image
-    #             if tex_img.source != 'FILE':
-    #                 image = tex_img.name
-    #             else:
-    #                 image = os.path.basename(tex_img.filepath)
-    #         except:
-    #             image = "<undefined>"
+    if not material:
+        return out
+    unk_count = 0
+    for slot in material.texture_slots:
+        if slot is None:
+            continue
+        texture = slot.texture
+        if texture is None:
+            continue
+        if texture.type == 'IMAGE':
+            try:
+                tex_img = slot.texture.image
+                if tex_img.source != 'FILE':
+                    image = tex_img.name
+                else:
+                    image = os.path.basename(tex_img.filepath)
+            except:
+                image = "<undefined>"
 
-    #         if slot.use_map_color_diffuse:
-    #             out['color'] = image
-    #         elif slot.use_map_normal:
-    #             out['normal'] = image
-    #         else:
-    #             out['unk_%d' % unk_count] = image
-    #             unk_count += 1
+            if slot.use_map_color_diffuse:
+                out['color'] = image
+            elif slot.use_map_normal:
+                out['normal'] = image
+            else:
+                out['unk_%d' % unk_count] = image
+                unk_count += 1
     return out
 
 
@@ -190,7 +190,7 @@ class ExportMesh(object):
 
     def clear(self):
         self.mesh.user_clear()
-        # bpy.data.meshes.remove(self.mesh)
+        bpy.data.meshes.remove(self.mesh)
 
     def add_weights(self, bone_table, weight_min_threshold=0.0):
         ob = self.object
@@ -240,7 +240,7 @@ class ExportMesh(object):
             self.mesh.calc_normals()
 
         uv_layer = self.mesh.uv_layers.active
-        vc_layer = self.mesh.vertex_colors.active
+        vc_layer = self.mesh.tessface_vertex_colors.active
 
         # Get the vertex layer to use for alpha
         if not use_alpha:
@@ -251,7 +251,7 @@ class ExportMesh(object):
             vca_layer = vc_layer
             # Get the first vertex color layer that isn't active
             #  If one can't be found, fallback to the active layer
-            for layer in self.mesh.vertex_colors:
+            for layer in self.mesh.tessface_vertex_colors:
                 if layer is not vc_layer:
                     vca_layer = layer
                     break
@@ -271,21 +271,19 @@ class ExportMesh(object):
             face.material_id = self.materials[polygon.material_index]
             if vc_layer is not None:
                 vert_colors = vc_layer.data[polygon.index]
-                # poly_colors = [vert_colors.color1,
-                #                vert_colors.color2, vert_colors.color3]
+                poly_colors = [vert_colors.color1,
+                               vert_colors.color2, vert_colors.color3]
 
                 # Calculate alpha values for the verts for this polygon
                 if vca_layer is None:
                     alphas = [alpha_default] * 3
                 else:
                     vert_colors = vca_layer.data[polygon.index]
-                    # alphas = [sum(vert_colors.color1) / 3,
-                    #           sum(vert_colors.color2) / 3,
-                    #           sum(vert_colors.color3) / 3]
-                    alphas = [alpha_default] * 3
+                    alphas = [sum(vert_colors.color1) / 3,
+                              sum(vert_colors.color2) / 3,
+                              sum(vert_colors.color3) / 3]
 
-                # colors = [tuple(c) + (a,) for c, a in zip(poly_colors, alphas)]
-                colors = [(1.0, 1.0, 1.0, alpha_default)] * 4
+                colors = [tuple(c) + (a,) for c, a in zip(poly_colors, alphas)]
             else:
                 colors = [(1.0, 1.0, 1.0, alpha_default)] * 4
             for i, loop_index in enumerate(polygon.loop_indices):
@@ -459,7 +457,6 @@ def save_model(self, context, filepath, armature, objects,
     meshes = []
     materials = []
 
-    depsgraph = context.evaluated_depsgraph_get()
     for ob in objects:
         # Set up modifiers whether to apply deformation or not
         mod_states = []
@@ -474,9 +471,9 @@ def save_model(self, context, filepath, armature, objects,
 
         # to_mesh() applies enabled modifiers only
         try:
-            object_eval = ob.evaluated_get(depsgraph)
-            # mesh = bpy.data.meshes.new_from_object(object_eval)
-            mesh = object_eval.to_mesh(preserve_all_data_layers=True, depsgraph=depsgraph)
+            # NOTE There's no way to get a 'render' depsgraph for now
+            depsgraph = context.evaluated_depsgraph_get()
+            mesh = ob.evaluated_get(depsgraph).to_mesh()
         except RuntimeError:
             mesh = None
 
@@ -502,17 +499,17 @@ def save_model(self, context, filepath, armature, objects,
             mesh.user_clear()
             bpy.data.meshes.remove(mesh)
             continue
-        # if len(mesh.tessfaces) < 1:
-        #     _skip_notice(ob.name, mesh.name, "No faces")
-        #     mesh.user_clear()
-        #     bpy.data.meshes.remove(mesh)
-        #     continue
+        if len(mesh.tessfaces) < 1:
+            _skip_notice(ob.name, mesh.name, "No faces")
+            mesh.user_clear()
+            bpy.data.meshes.remove(mesh)
+            continue
 
-        # if not mesh.tessface_uv_textures:
-        #     _skip_notice(ob.name, mesh.name, "No UV texture, not unwrapped?")
-        #     mesh.user_clear()
-        #     bpy.data.meshes.remove(mesh)
-        #     continue
+        if not mesh.tessface_uv_textures:
+            _skip_notice(ob.name, mesh.name, "No UV texture, not unwrapped?")
+            mesh.user_clear()
+            bpy.data.meshes.remove(mesh)
+            continue
 
         meshes.append(ExportMesh(ob, mesh, materials))
 
@@ -592,5 +589,5 @@ def save_model(self, context, filepath, armature, objects,
     for mesh in meshes:
         mesh.clear()
 
-    # Do we need this scene.update?
+    # Do we need this view_layer.update?
     context.view_layer.update()

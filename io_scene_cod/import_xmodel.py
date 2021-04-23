@@ -97,6 +97,8 @@ def join_armatures(skel1_ob, skel2_ob, skel2_mesh_obs):
 
     if 'j_gun' in ebs and 'tag_weapon' in ebs:
         ebs['j_gun'].parent = ebs['tag_weapon']
+    elif 'tag_weapon' in ebs and 'tag_weapon_right' in ebs:
+        ebs['tag_weapon'].parent = ebs['tag_weapon_right']
 
     bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -535,6 +537,10 @@ def load(self, context,
                 skel_obj.parent = skel_old
             if skel_obj.pose.bones[0].name == "j_gun":
                 skel_obj.parent_bone = "tag_weapon"
+            elif skel_obj.pose.bones[0].name == "tag_weapon":
+                 # Todo - add option to manually specify whether or not the user
+                 #        wants to attach to the left or right hand
+                skel_obj.parent_bone = "tag_weapon_right"
             else:
                 if skel_obj.pose.bones[0].name in skel_old.pose.bones:
                     skel_obj.parent_bone = skel_obj.pose.bones[0].name
@@ -547,12 +553,12 @@ def load(self, context,
             skel_obj.location = (0, -1, 0)
 
             # Is this necessary?
-            bpy.context.scene.update()
+            bpy.context.view_layer.update()
 
             # Merge the skeletons together
             if merge_skeleton:
                 join_armatures(skel_old, skel_obj, mesh_objs)
                 bpy.ops.object.mode_set(mode='POSE')
 
-    # scene.update()
+    # view_layer.update()
     bpy.ops.object.mode_set(mode='OBJECT')

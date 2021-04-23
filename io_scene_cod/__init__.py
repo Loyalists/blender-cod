@@ -36,7 +36,7 @@ import os
 bl_info = {
     "name": "Blender-CoD",
     "author": "CoDEmanX, Flybynyt, SE2Dev",
-    "version": (0, 6, 0),
+    "version": (0, 7, 0),
     "blender": (2, 90, 0),
     "location": "File > Import  |  File > Export",
     "description": "Import-Export XModel_Export, XAnim_Export",
@@ -284,7 +284,7 @@ class COD_MT_import_xmodel(bpy.types.Operator, ImportHelper):
             row = layout.row(align=True)
             row.prop(self, "global_scale")
             sub = row.row(align=True)
-            sub.prop(self, "apply_unit_scale", text="", icon='NONE')
+            sub.prop(self, "apply_unit_scale", text="")
 
             layout.prop(self, 'use_single_mesh')
 
@@ -423,7 +423,7 @@ class COD_MT_import_xanim(bpy.types.Operator, ImportHelper):
         row = layout.row(align=True)
         row.prop(self, "global_scale")
         sub = row.row(align=True)
-        sub.prop(self, "apply_unit_scale", text="", icon='NONE')
+        sub.prop(self, "apply_unit_scale", text="")
 
         layout.prop(self, 'use_actions')
         sub = layout.split()
@@ -544,7 +544,7 @@ class COD_MT_export_xmodel(bpy.types.Operator, ExportHelper):
     apply_modifiers: BoolProperty(
         name="Apply Modifiers",
         description="Apply all mesh modifiers (except Armature)",
-        default=True
+        default=False
     )
 
     modifier_quality: EnumProperty(
@@ -688,7 +688,7 @@ class COD_MT_export_xmodel(bpy.types.Operator, ExportHelper):
         row = layout.row(align=True)
         row.prop(self, "global_scale")
         sub = row.row(align=True)
-        sub.prop(self, "apply_unit_scale", text="", icon='NONE')
+        sub.prop(self, "apply_unit_scale", text="")
 
         # Axis?
 
@@ -938,7 +938,7 @@ class COD_MT_export_xanim(bpy.types.Operator, ExportHelper):
         row = layout.row(align=True)
         row.prop(self, "global_scale")
         sub = row.row(align=True)
-        sub.prop(self, "apply_unit_scale", text="", icon='NONE')
+        sub.prop(self, "apply_unit_scale", text="")
 
         action_count = len(bpy.data.actions)
 
