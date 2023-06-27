@@ -46,7 +46,7 @@ def mesh_triangulate(mesh, vertex_cleanup):
     bm.to_mesh(mesh)
     bm.free()
 
-    mesh.update(calc_edges=True, calc_edges_loose=True)
+    # mesh.update(calc_edges=True, calc_edges_loose=True)
 
 
 def gather_exportable_objects(self, context,
@@ -234,11 +234,6 @@ class ExportMesh(object):
 
         mesh = XModel.Mesh(self.mesh.name)
 
-        if self.mesh.has_custom_normals:
-            self.mesh.calc_normals_split()
-        else:
-            self.mesh.calc_normals()
-
         uv_layer = self.mesh.uv_layers.active
         vc_layer = self.mesh.vertex_colors.active
 
@@ -303,10 +298,11 @@ class ExportMesh(object):
                     #             sum(vert_colors.color2) / 3,
                     #             sum(vert_colors.color3) / 3]
 
-                    color = (poly_colors[0], poly_colors[1], poly_colors[2], poly_colors[3])
+                    color = (poly_colors[0], poly_colors[1],
+                             poly_colors[2], poly_colors[3])
                 else:
                     color = (1.0, 1.0, 1.0, alpha_default)
-                    
+
                 vert = XModel.FaceVertex(
                     loop.vertex_index,
                     loop.normal,
@@ -491,7 +487,8 @@ def save_model(self, context, filepath, armature, objects,
         # to_mesh() applies enabled modifiers only
         try:
             # NOTE There's no way to get a 'render' depsgraph for now
-            mesh = ob.evaluated_get(depsgraph).to_mesh(preserve_all_data_layers=True, depsgraph=depsgraph)
+            mesh = ob.evaluated_get(depsgraph).to_mesh(
+                preserve_all_data_layers=True, depsgraph=depsgraph)
         except RuntimeError:
             mesh = None
 
@@ -503,9 +500,11 @@ def save_model(self, context, filepath, armature, objects,
         mesh_triangulate(mesh, use_vertex_cleanup)
 
         # Should we have an arg for this? It seems to be automatic...
-        use_split_normals = True
-        if use_split_normals:
-            mesh.calc_normals_split()
+        # if self.mesh.has_custom_normals:
+        #     self.mesh.calc_normals_split()
+        # else:
+        #     self.mesh.calc_normals()
+        mesh.calc_normals_split()
 
         # Restore modifier settings
         for i, mod in enumerate(ob.modifiers):
