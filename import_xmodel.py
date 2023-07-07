@@ -111,7 +111,7 @@ def join_armatures(skel1_ob, skel2_ob, skel2_mesh_obs):
             mod.object = skel1_ob
         else:
             # Add a new armature modifier
-            mod = mesh_ob.modifiers.new('Armature Rig', 'ARMATURE')
+            mod = mesh_ob.modifiers.new('Armature', 'ARMATURE')
             mod.object = skel1_ob
             mod.use_bone_envelopes = False
             mod.use_vertex_groups = True
@@ -515,7 +515,7 @@ def load(self, context,
         # Add the armature modifier to each mesh object
         for mesh_obj in mesh_objs:
             mesh_obj.parent = skel_obj
-            modifier = mesh_obj.modifiers.new('Armature Rig', 'ARMATURE')
+            modifier = mesh_obj.modifiers.new('Armature', 'ARMATURE')
             modifier.object = skel_obj
             modifier.use_bone_envelopes = False
             modifier.use_vertex_groups = True
