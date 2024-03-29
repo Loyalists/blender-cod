@@ -504,7 +504,8 @@ def save_model(self, context, filepath, armature, objects,
         #     self.mesh.calc_normals_split()
         # else:
         #     self.mesh.calc_normals()
-        mesh.calc_normals_split()
+        if bpy.app.version < (4, 1, 0):
+            mesh.calc_normals_split()
 
         # Restore modifier settings
         for i, mod in enumerate(ob.modifiers):
@@ -516,7 +517,7 @@ def save_model(self, context, filepath, armature, objects,
             mesh.user_clear()
             bpy.data.meshes.remove(mesh)
             continue
-        # if len(mesh.tessfaces) < 1:
+
         # if len(mesh.tessfaces) < 1:
         #     _skip_notice(ob.name, mesh.name, "No faces")
         #     mesh.user_clear()

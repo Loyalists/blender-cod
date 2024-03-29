@@ -406,26 +406,27 @@ def load(self, context,
             # Store 'temp' normals in loops, since validate() may alter the
             #  final mesh.
             # We can only set custom loop normals *after* calling it.
-            mesh.create_normals_split()
+            if bpy.app.version < (4, 1, 0):
+                mesh.create_normals_split()
 
             # Iterate over every single loop (every vert for every face)
-            for loop_index, loop in enumerate(mesh.loops):
-                mesh.loops[loop_index].normal = loop_normals[loop_index]
-
-            # *Very* important to not remove loop normals here!
-            mesh.validate(clean_customdata=False)
+            # for loop_index, loop in enumerate(mesh.loops):
+            #     mesh.loops[loop_index].normal = loop_normals[loop_index]
 
             # mesh.free_normals_split() # Is this necessary?
 
-            clnors = array.array('f', [0.0] * (len(mesh.loops) * 3))
-            mesh.loops.foreach_get("normal", clnors)
+            # mesh.loops.foreach_get("normal", clnors)
 
             # Enable Smoothing - must be BEFORE normals_split_custom_set, etc.
             polygon_count = len(mesh.polygons)
             mesh.polygons.foreach_set("use_smooth", [True] * polygon_count)
 
-            mesh.normals_split_custom_set(tuple(zip(*(iter(clnors),) * 3)))
-            mesh.use_auto_smooth = True
+            mesh.normals_split_custom_set(loop_normals)
+            if bpy.app.version < (4, 1, 0):
+                mesh.use_auto_smooth = True
+
+            # *Very* important to not remove loop normals here!
+            mesh.validate(clean_customdata=False)
 
             # This was used to highlight sharp edges in legacy versions
             # In Blender 2.8x, it uses the View3D Overlay API - but since
@@ -441,7 +442,8 @@ def load(self, context,
             mesh.polygons.foreach_set("use_smooth", [True] * polygon_count)
 
             # Use Auto-generated Normals
-            mesh.calc_normals()
+            if bpy.app.version < (4, 1, 0):
+                mesh.calc_normals()
 
         if split_meshes:
             obj_name = "%s_%s" % (model.name, mesh.name)
