@@ -43,7 +43,7 @@ def get_mat_rest(pose_bone, mat_pose_parent, mat_local_parent):
         mat_offs = get_mat_offs(bone)
 
         # --------- rotscale
-        if (not bone.use_inherit_rotation and not bone.use_inherit_scale):
+        if (not bone.use_inherit_rotation and not (bone.inherit_scale == 'NONE' or bone.inherit_scale == 'NONE_LEGACY')):
             mat_rotscale = mat_local_parent @ mat_offs
 
         elif not bone.use_inherit_rotation:
@@ -52,7 +52,7 @@ def get_mat_rest(pose_bone, mat_pose_parent, mat_local_parent):
                 mat_size[i][i] = mat_pose_parent.col[i].magnitude
             mat_rotscale = mat_size @ mat_local_parent @ mat_offs
 
-        elif not bone.use_inherit_scale:
+        elif not (bone.inherit_scale == 'NONE' or bone.inherit_scale == 'NONE_LEGACY'):
             mat_rotscale = mat_pose_parent.normalized() @ mat_offs
 
         else:
@@ -67,7 +67,7 @@ def get_mat_rest(pose_bone, mat_pose_parent, mat_local_parent):
 
             mat_loc = mat_a @ mat_b
 
-        elif (not bone.use_inherit_rotation or not bone.use_inherit_scale):
+        elif (not bone.use_inherit_rotation or not (bone.inherit_scale == 'NONE' or bone.inherit_scale == 'NONE_LEGACY')):
             mat_loc = mat_pose_parent @ mat_offs
 
         else:
