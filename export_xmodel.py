@@ -285,23 +285,24 @@ class ExportMesh(object):
             for i, loop_index in enumerate(polygon.loop_indices):
                 loop = self.mesh.loops[loop_index]
                 uv = uv_layer.data[loop_index].uv
-                if vc_layer is not None:
-                    vert_colors = vc_layer.data[loop.vertex_index]
-                    poly_colors = vert_colors.color
+                # if vc_layer is not None:
+                #     vert_colors = vc_layer.data[loop.vertex_index]
+                #     poly_colors = vert_colors.color
 
-                    # Calculate alpha values for the verts for this polygon
-                    # if vca_layer is None:
-                    #     alpha = alpha_default
-                    # else:
-                    #     vert_colors = vca_layer.data[polygon.index]
-                    #     alpha = [sum(vert_colors.color1) / 3,
-                    #             sum(vert_colors.color2) / 3,
-                    #             sum(vert_colors.color3) / 3]
+                #     # Calculate alpha values for the verts for this polygon
+                #     # if vca_layer is None:
+                #     #     alpha = alpha_default
+                #     # else:
+                #     #     vert_colors = vca_layer.data[polygon.index]
+                #     #     alpha = [sum(vert_colors.color1) / 3,
+                #     #             sum(vert_colors.color2) / 3,
+                #     #             sum(vert_colors.color3) / 3]
 
-                    color = (poly_colors[0], poly_colors[1],
-                             poly_colors[2], poly_colors[3])
-                else:
-                    color = (1.0, 1.0, 1.0, alpha_default)
+                #     color = (poly_colors[0], poly_colors[1],
+                #              poly_colors[2], poly_colors[3])
+                # else:
+                #     color = (1.0, 1.0, 1.0, alpha_default)
+                color = (1.0, 1.0, 1.0, alpha_default)
 
                 vert = XModel.FaceVertex(
                     loop.vertex_index,

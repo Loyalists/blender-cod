@@ -130,19 +130,19 @@ class BlenderCoD_Preferences(AddonPreferences):
 # To support reload properly, try to access a package var, if it's there,
 # reload everything
 if "bpy" in locals():
-    import imp
+    import importlib
     if "import_xmodel" in locals():
-        imp.reload(import_xmodel)
+        importlib.reload(import_xmodel)
     if "export_xmodel" in locals():
-        imp.reload(export_xmodel)
+        importlib.reload(export_xmodel)
     if "import_xanim" in locals():
-        imp.reload(import_xanim)
+        importlib.reload(import_xanim)
     if "export_xanim" in locals():
-        imp.reload(export_xanim)
+        importlib.reload(export_xanim)
     if "shared" in locals():
-        imp.reload(shared)
+        importlib.reload(shared)
     if "PyCoD" in locals():
-        imp.reload(PyCoD)
+        importlib.reload(PyCoD)
 
 else:
     from . import import_xmodel, export_xmodel, import_xanim, export_xanim
