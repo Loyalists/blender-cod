@@ -33,19 +33,10 @@ def get_metadata_string(filepath):
     return msg
 
 
-def calculate_unit_scale_factor(scene, apply_unit_scale=False):
-    '''
-    Calcualte the conversion factor to convert from
-     Blender units (Usually 1 meter) to inches (CoD units).
-    If no explicit unit system is set in the scene settings, we fallback to the
-     global Blender-CoD scale units. If that option is disabled we use a 1:1
-     scale factor to convert from Blender Units to Inches
-     (Assuming 1 BU is 1 inch)
-    '''
-    if not apply_unit_scale:
-        return 1.0
-
+def calculate_unit_scale_factor(scene):
+    """Return the number of CoD inches per Blender unit."""
     if scene.unit_settings.system != 'NONE':
-        return plugin_preferences.scale_length / 0.0254
-    else:
         return scene.unit_settings.scale_length / 0.0254
+    if plugin_preferences is not None:
+        return plugin_preferences.scale_length / 0.0254
+    return 1.0

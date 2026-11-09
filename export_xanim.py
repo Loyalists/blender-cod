@@ -20,6 +20,8 @@
 
 import os
 import bpy
+from math import ceil, floor
+from bpy_extras import anim_utils
 from string import Template
 
 from . import shared as shared
@@ -37,20 +39,23 @@ class CustomTemplate(Template):
         return self.substitute(args)
 
 
-def calc_frame_range(action):
-    '''
-    action.frame_range is inaccurate for actions with 0 or 1 keyframe(s)
-    This function returns the real (inclusive) frame range for a given action
-    '''
-    if len(action.fcurves) == 0:
-        return (0, 0)
-    keys = [fcurve.keyframe_points for fcurve in action.fcurves]
-    points = [point for keyframe_points in keys for point in keyframe_points]
-    frames = [point.co[0] for point in points]
-    return (min(frames), max(frames))
+def calc_frame_range(action, slot):
+    if action.use_frame_range:
+        return action.frame_range
+    if bpy.app.version >= (4, 4, 0):
+        channelbag = anim_utils.action_get_channelbag_for_slot(action, slot) if slot else None
+        curves = channelbag.fcurves if channelbag else ()
+    else:
+        curves = action.fcurves
+
+    ranges = [curve.range() for curve in curves
+              if curve.keyframe_points or curve.sampled_points]
+    if not ranges:
+        return action.frame_range
+    return min(start for start, _ in ranges), max(end for _, end in ranges)
 
 
-def export_action(self, context, progress, action,
+def export_action(context, action,
                   filepath,
                   target_format,
                   global_scale=1.0,
@@ -80,17 +85,20 @@ def export_action(self, context, progress, action,
 
     # Fallback to ACTION frame range mode if none set
     if frame_range is None:
-        frame_range = calc_frame_range(action)
+        frame_range = calc_frame_range(action, getattr(ob.animation_data, 'action_slot', None))
 
-    for frame_number in range(int(frame_range[0]), int(frame_range[1]) + 1):
+    first_frame, last_frame = floor(frame_range[0]), ceil(frame_range[1])
+    root_inverse = ob.data.bones[0].matrix_local.inverted_safe()
+    for frame_number in range(first_frame, last_frame + 1):
         # Set frame directly
         context.scene.frame_set(frame_number)
 
         # Add the animation data for each bone
         frame = XAnim.Frame(frame_number)
         for bone in pose_bones:
-            offset = tuple(bone.head * global_scale)
-            m = bone.matrix.to_3x3().transposed()
+            pose_matrix = root_inverse @ bone.matrix
+            offset = tuple(pose_matrix.translation * global_scale)
+            m = pose_matrix.to_quaternion().to_matrix().transposed()
             matrix = [tuple(v) for v in m]
             part = XAnim.FramePart(offset, matrix)
             frame.parts.append(part)
@@ -105,7 +113,8 @@ def export_action(self, context, progress, action,
             # This should never happen!
             markers = []
 
-        notes = [XAnim.Note(marker.frame, marker.name) for marker in markers]
+        notes = [XAnim.Note(marker.frame, marker.name) for marker in markers
+                 if first_frame <= marker.frame <= last_frame]
         anim.notes = notes
 
     # Write the XANIM_EXPORT file (and NT_EXPORT file if enabled)
@@ -143,17 +152,19 @@ def save(self, context, filepath="",
 
     # Apply unit conversion factor to the scale
     if apply_unit_scale:
-        global_scale /= shared.calculate_unit_scale_factor(context.scene)
+        global_scale *= shared.calculate_unit_scale_factor(context.scene)
 
-    ob = bpy.context.object
-    if ob.type != 'ARMATURE':
+    ob = context.object
+    if ob is None or ob.type != 'ARMATURE':
         return "An armature must be selected!"
 
     if ob.animation_data is None:
         return "The selected armature has no animation data!"
 
-    # TODO: Progress counter
-    progress = None
+    if not ob.pose.bones:
+        return "The selected armature has no bones!"
+    if use_selection and not context.selected_pose_bones:
+        return "Select at least one bone in Pose Mode."
 
     actions = []
     if use_all_actions:
@@ -161,14 +172,24 @@ def save(self, context, filepath="",
     else:
         actions = [ob.animation_data.action]
 
+    if not actions or any(action is None for action in actions):
+        return "There are no actions to export."
+
     frame_original = context.scene.frame_current
+    subframe_original = context.scene.frame_subframe
     action_original = ob.animation_data.action
+    slot_original = getattr(ob.animation_data, 'action_slot', None)
 
     # Determine the framerate based on use_custom_framerate
     if not use_custom_framerate:
-        framerate = context.scene.render.fps
+        framerate = context.scene.render.fps / context.scene.render.fps_base
     else:
         framerate = use_framerate
+
+    if target_format == 'XANIM_BIN':
+        if abs(framerate - round(framerate)) > 1e-5:
+            return "XANIM_BIN requires a whole-number framerate. Set a Custom Framerate."
+        framerate = round(framerate)
 
     # Determine the frame range based on use_frame_range_mode
     if use_frame_range_mode == 'SCENE':
@@ -179,22 +200,34 @@ def save(self, context, filepath="",
         frame_range = None
 
     filename_format = CustomTemplate(filename_format)
-    path = os.path.dirname(filepath) + os.sep
-    basename, ext = os.path.splitext(os.path.basename(filepath))
-    for index, action in enumerate(actions):
-        if use_all_actions:
-            filename = filename_format.format(action.name, basename, index)
-            filepath = path + filename + "." + target_format
-            ob.animation_data.action = action
-        export_action(self, context, progress, action, filepath,
-                      target_format,
-                      global_scale,
-                      framerate,
-                      frame_range,
-                      use_selection,
-                      use_notetracks,
-                      use_notetrack_file,
-                      use_notetrack_mode)
+    path = os.path.dirname(filepath)
+    basename = os.path.splitext(os.path.basename(filepath))[0]
+    if frame_range is not None and frame_range[0] > frame_range[1]:
+        return "The start frame must be at or before the end frame."
 
-    ob.animation_data.action = action_original
-    context.scene.frame_set(frame_original)
+    exported = 0
+    try:
+        for index, action in enumerate(actions):
+            if use_all_actions:
+                filename = filename_format.format(action.name, basename, index)
+                filepath = os.path.join(path, filename + "." + target_format)
+                ob.animation_data.action = action
+                if bpy.app.version >= (4, 4, 0) and ob.animation_data.action_slot is None:
+                    slots = ob.animation_data.action_suitable_slots
+                    if len(slots) != 1:
+                        self.report({'WARNING'}, "Skipped action '%s' with no unambiguous armature slot." % action.name)
+                        continue
+                    ob.animation_data.action_slot = slots[0]
+            export_action(context, action, filepath,
+                          target_format, global_scale, framerate, frame_range,
+                          use_selection, use_notetracks, use_notetrack_file,
+                          use_notetrack_mode)
+            exported += 1
+    finally:
+        if use_all_actions:
+            ob.animation_data.action = action_original
+            if slot_original is not None:
+                ob.animation_data.action_slot = slot_original
+        context.scene.frame_set(frame_original, subframe=subframe_original)
+    if not exported:
+        return "There are no compatible actions to export."

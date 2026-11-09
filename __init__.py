@@ -110,7 +110,7 @@ class BlenderCoD_Preferences(AddonPreferences):
         max=100000.0,
         precision=6,
         step=1,
-        default=1.0
+        default=0.0254
     )
 
     def draw(self, context):
@@ -313,9 +313,9 @@ class COD_MT_import_xanim(bpy.types.Operator, ImportHelper):
     bl_description = "Import a CoD XANIM_EXPORT / XANIM_BIN File"
     bl_options = {'PRESET'}
 
-    filename_ext = ".XANIM_EXPORT;.NT_EXPORT;.XANIM_BIN"
+    filename_ext = ".XANIM_EXPORT;.XANIM_BIN"
     filter_glob: StringProperty(
-        default="*.XANIM_EXPORT;*.NT_EXPORT;*.XANIM_BIN",
+        default="*.XANIM_EXPORT;*.XANIM_BIN",
         options={'HIDDEN'}
     )
 
@@ -508,7 +508,7 @@ class COD_MT_export_xmodel(bpy.types.Operator, ExportHelper):
         name="Vertex Colors",
         description=("Export vertex colors "
                      "(if disabled, white color will be used)"),
-        default=True
+        default=False
     )
 
     #  White is 1 (opaque), black 0 (invisible)
@@ -548,7 +548,7 @@ class COD_MT_export_xmodel(bpy.types.Operator, ExportHelper):
 
     modifier_quality: EnumProperty(
         name="Modifier Quality",
-        description="The quality at which to apply mesh modifiers",
+        description="Use viewport or render subdivision levels for visible modifiers",
         items=(('PREVIEW', "Preview", ""),
                ('RENDER', "Render", ""),
                ),
@@ -980,7 +980,7 @@ class COD_MT_export_xanim(bpy.types.Operator, ExportHelper):
         sub.enabled = self.use_notetrack_mode != 'NONE'
 
         sub = sub.split()
-        sub.enabled = self.use_notetracks
+        sub.enabled = self.use_notetracks and self.target_format == 'XANIM_EXPORT'
         sub.prop(self, 'use_notetrack_file')
 
         # Framerate

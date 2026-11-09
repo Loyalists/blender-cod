@@ -21,9 +21,8 @@
 import os
 import bpy
 import bmesh
-import array
 from mathutils import *
-from math import *
+from struct import error as StructError
 from bpy_extras.image_utils import load_image
 
 from . import shared as shared
@@ -51,70 +50,70 @@ def get_armature_modifier_for_object(ob):
     return None
 
 
-def reassign_children(ebs, bone1, bone2):
-    for child in bone2.children:
-        kid = ebs[child.name]
-        kid.parent = bone1
-
-    ebs.remove(bone2)
-
-
-def join_objects(obs):
-    scene = bpy.context.scene
-    context = bpy.context.copy()
-    context['active_object'] = obs[0]
-    context['selected_objects'] = obs
-
-    editable_bases = [scene.object_bases[ob.name] for ob in obs]
-    context['selected_editable_bases'] = editable_bases
-    bpy.ops.object.join(context)
-
-
-def join_armatures(skel1_ob, skel2_ob, skel2_mesh_obs):
-    skel2_mesh_matrices = [mesh.matrix_world.copy() for mesh in skel2_mesh_obs]
-
-    join_objects([skel1_ob, skel2_ob])
-
-    # Ensure that the context is correct
-    bpy.context.scene.objects.active = skel1_ob
-    skel1_ob.select_set(state=True)
-
+def join_armatures(context, target, source, meshes):
+    context.view_layer.update()
+    mesh_matrices = [mesh.matrix_world.copy() for mesh in meshes]
+    transform = target.matrix_world.inverted_safe() @ source.matrix_world
+    context.view_layer.objects.active = target
     bpy.ops.object.mode_set(mode='EDIT')
-    ebs = skel1_ob.data.edit_bones
+    try:
+        edit_bones = target.data.edit_bones
+        new_bones = {}
+        for bone in source.data.bones:
+            if bone.name in edit_bones:
+                continue
+            edit_bone = edit_bones.new(bone.name)
+            edit_bone.head = transform @ bone.head_local
+            edit_bone.tail = transform @ bone.tail_local
+            edit_bone.align_roll(transform.to_3x3() @ bone.matrix_local.col[2].xyz)
+            edit_bone.use_local_location = bone.use_local_location
+            new_bones[bone.name] = edit_bone
+        for bone in source.data.bones:
+            if bone.name in new_bones and bone.parent:
+                new_bones[bone.name].parent = edit_bones[bone.parent.name]
+        for child, parent in (('j_gun', 'tag_weapon'), ('tag_weapon', 'tag_weapon_right')):
+            if child in new_bones and parent in edit_bones:
+                edit_bones[child].parent = edit_bones[parent]
+    finally:
+        bpy.ops.object.mode_set(mode='OBJECT')
 
-    # Reassign all children for any bones that were present in both skeletons
-    for bone in ebs:
-        try:
-            t = ebs[bone.name + ".001"]
-            reassign_children(ebs, bone, t)
-        except:
-            pass
+    for mesh, matrix in zip(meshes, mesh_matrices):
+        modifier = get_armature_modifier_for_object(mesh)
+        modifier.object = target
+        mesh.parent = target
+        mesh.matrix_world = matrix
+    source_data = source.data
+    bpy.data.objects.remove(source, do_unlink=True)
+    if not source_data.users:
+        bpy.data.armatures.remove(source_data)
 
-    # Remove the move the duplicates
-    for bone in ebs:
-        if(bone.name.endswith(".001")):
-            ebs.remove(bone)
 
-    if 'j_gun' in ebs and 'tag_weapon' in ebs:
-        ebs['j_gun'].parent = ebs['tag_weapon']
-    elif 'tag_weapon' in ebs and 'tag_weapon_right' in ebs:
-        ebs['tag_weapon'].parent = ebs['tag_weapon_right']
-
-    bpy.ops.object.mode_set(mode='OBJECT')
-
-    # Update the matrices and armature modifier for the mesh objects
-    for mesh_ob, matrix in zip(skel2_mesh_obs, skel2_mesh_matrices):
-        mesh_ob.matrix_world = matrix
-        mod = get_armature_modifier_for_object(mesh_ob)
-        if mod is not None:
-            # Update the existing armature modifier
-            mod.object = skel1_ob
+def setup_material(material, images, search_dir, recursive):
+    material.use_nodes = True
+    tree = material.node_tree
+    shader = next(node for node in tree.nodes if node.type == 'BSDF_PRINCIPLED')
+    for image_type, input_name in (('color', 'Base Color'), ('normal', 'Normal')):
+        image_name = images.get(image_type)
+        if not image_name or image_name == '$none.tga':
+            continue
+        image = load_image(image_name, dirname=search_dir, recursive=recursive,
+                           check_existing=True)
+        if image is None:
+            continue
+        texture = tree.nodes.new('ShaderNodeTexImage')
+        texture.image = image
+        texture.location = (-520, 240 if image_type == 'color' else -40)
+        if image_type == 'normal':
+            if image.colorspace_settings.name != 'Non-Color':
+                image = image.copy()
+                image.colorspace_settings.name = 'Non-Color'
+                texture.image = image
+            normal = tree.nodes.new('ShaderNodeNormalMap')
+            normal.location = (-240, -40)
+            tree.links.new(texture.outputs['Color'], normal.inputs['Color'])
+            tree.links.new(normal.outputs['Normal'], shader.inputs[input_name])
         else:
-            # Add a new armature modifier
-            mod = mesh_ob.modifiers.new('Armature', 'ARMATURE')
-            mod.object = skel1_ob
-            mod.use_bone_envelopes = False
-            mod.use_vertex_groups = True
+            tree.links.new(texture.outputs['Color'], shader.inputs[input_name])
 
 
 def load(self, context,
@@ -133,7 +132,7 @@ def load(self, context,
 
     # Apply unit conversion factor to the scale
     if apply_unit_scale:
-        global_scale *= shared.calculate_unit_scale_factor(context.scene)
+        global_scale /= shared.calculate_unit_scale_factor(context.scene)
 
     target_scale = global_scale
 
@@ -148,7 +147,6 @@ def load(self, context,
         merge_skeleton = False
 
     split_meshes = not use_single_mesh
-    load_images = True
 
     scene = bpy.context.scene
     view_layer = bpy.context.view_layer
@@ -163,100 +161,38 @@ def load(self, context,
     else:
         LoadModelFile = model.LoadFile_Raw
 
-    LoadModelFile(filepath, split_meshes=split_meshes)
+    try:
+        LoadModelFile(filepath, split_meshes=split_meshes)
+    except (OSError, ValueError, AttributeError, TypeError, IndexError, StructError) as error:
+        return "Invalid XMODEL '%s': %s" % (model_name, error)
 
-    # Materials
-    # List of the materials that Blender has loaded
+    if not model.meshes or not any(mesh and mesh.verts for mesh in model.meshes):
+        return "XMODEL has no mesh vertices."
+    if any(mesh is None for mesh in model.meshes) or any(mat is None for mat in model.materials):
+        return "XMODEL contains incomplete objects or materials."
+    for mesh in model.meshes:
+        if any(vert.offset is None for vert in mesh.verts):
+            return "XMODEL contains incomplete vertices."
+        if any(face.material_id is None or not 0 <= face.material_id < len(model.materials)
+               or any(index is None or not 0 <= index.vertex < len(mesh.verts)
+                      for index in face.indices) for face in mesh.faces):
+            return "XMODEL contains incomplete or invalid faces."
+    if use_armature and not model.bones:
+        use_armature = attach_model = merge_skeleton = False
+    if use_armature and any(not bone.name or bone.offset is None
+                            or any(axis is None for axis in bone.matrix)
+                            for bone in model.bones):
+        return "XMODEL contains incomplete bones."
+
+    if context.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+
     materials = []
-    # Map of images to their instances in Blender
-    #  (or None if they failed to load)
-    material_images = {}
-
     for material in model.materials:
         mat = bpy.data.materials.get(material.name)
         if mat is None:
-            print("Adding material '%s'" % material.name)
             mat = bpy.data.materials.new(name=material.name)
-
-            # mat.diffuse_shader = 'LAMBERT'
-            # mat.specular_shader = 'PHONG'
-
-            # Load the textures for this material - TODO: Cycles Support
-            if load_images:
-                # Load the actual image files
-                # Color maps get deferred to after the other textures
-                deferred_textures = []
-                for image_type, image_name in material.images.items():
-                    if image_name not in material_images:
-                        search_dir = os.path.dirname(filepath)
-                        image = load_image(image_name,
-                                           dirname=search_dir,
-                                           recursive=use_image_search,
-                                           check_existing=True)
-                        if image is None:
-                            print("Failed to load image: '%s'" % image_name)
-                            # Create a placeholder image for the one that
-                            # failed to load
-                            image = load_image(image_name,
-                                               dirname=None,
-                                               recursive=False,
-                                               check_existing=True,
-                                               place_holder=True)
-                        material_images[image_name] = image
-                    elif image_name in bpy.data.images:
-                        image = bpy.data.images[image_name]
-                    else:
-                        image = material_images[image_name]
-
-                    # DEPRECATED
-                    '''
-                    # Create the texture - We exclude the extension in the
-                    #  texture name
-                    texture_name = os.path.splitext(image_name)[0]
-                    if texture_name in bpy.data.textures:
-                        tex = bpy.data.textures[texture_name]
-                    else:
-                        tex = bpy.data.textures.new(texture_name, 'IMAGE')
-                        tex.image = image
-
-                    if image_type == 'color':
-                        deferred_textures.append(tex)
-                        continue
-                    else:
-                        slot = mat.texture_slots.add()
-                        slot.texture = tex
-                        slot.use_map_color_diffuse = False
-                        slot.use_map_alpha = False
-                        if image_type == 'normal':
-                            slot.normal_factor = True
-                    '''
-
-                # DEPRECATED
-                '''
-                # Add the deferred_textures
-                for tex in deferred_textures:
-                    slot = mat.texture_slots.add()
-                    slot.texture = tex
-                    slot.use_map_color_diffuse = True
-                    if tex.image is not None and tex.image.channels > 3:
-                        # Enable Transparency
-                        slot.use_map_alpha = True
-                        slot.alpha_factor = 1.0
-                        # NOTE: Decide when use_transparency is needed
-                        #       I haven't been able to figure out a way
-                        #        to deterime this
-                        mat.use_transparency = True
-                        mat.transparency_method = 'Z_TRANSPARENCY'
-                        # Prevent specular from showing on transparent parts
-                        # NOTE: 'RAYTRACE' transparency_method has specular
-                        #        highlights show up regardless
-                        mat.specular_alpha = 0.0
-                    mat.alpha = 0
-                '''
-
-        else:
-            if mat not in materials:
-                print("Material '%s' already exists!" % material.name)
+            setup_material(mat, material.images, os.path.dirname(filepath), use_image_search)
         materials.append(mat)
 
     # Meshes
@@ -286,9 +222,9 @@ def load(self, context,
         dup_verts = []
 
         # Contains vertex mapping data for all verts that the dup faces use
-        dup_verts_mapping = [None] * len(sub_mesh.verts)
+        dup_verts_mapping = {}
+        duplicate_counts = {}
 
-        used_faces = []  # List of all faces that were used in the model
 
         loop_normals = []  # List of normals for every added loop (face vertex)
 
@@ -315,9 +251,7 @@ def load(self, context,
                 loop[uv_layer].uv = uv
                 # Vertex Colors
                 if use_vertex_colors:
-                    loop[vert_color_layer] = face_index_loop.color
-
-            used_faces.append(face)
+                    loop[vert_color_layer] = face_index_loop.color or (1.0, 1.0, 1.0, 1.0)
 
         unused_faces = []
 
@@ -341,12 +275,18 @@ def load(self, context,
                           (face_index, [index.vertex for index in face.indices]))
                     continue
 
+                if not use_dup_tris:
+                    continue
+                key = tuple(sorted(index.vertex for index in face.indices))
+                depth = duplicate_counts.get(key, 0) + 1
+                duplicate_counts[key] = depth
                 for index in face.indices:
                     vert = index.vertex
-                    if dup_verts_mapping[vert] is None:
-                        dup_verts_mapping[vert] = len(dup_verts) + vert_count
+                    mapping_key = (depth, vert)
+                    if mapping_key not in dup_verts_mapping:
+                        dup_verts_mapping[mapping_key] = len(dup_verts) + vert_count
                         dup_verts.append(sub_mesh.verts[vert])
-                    index.vertex = dup_verts_mapping[vert]
+                    index.vertex = dup_verts_mapping[mapping_key]
                 dup_faces.append(face)
             else:
                 setup_tri(f)
@@ -401,6 +341,16 @@ def load(self, context,
                 material_index += 1
             material_usage_index += 1
 
+        if split_meshes:
+            obj_name = "%s_%s" % (model.name, mesh.name)
+        else:
+            obj_name = model.name
+
+        obj = bpy.data.objects.new(obj_name, mesh)
+        # Mesh validation discards deform weights without matching groups.
+        for bone in model.bones:
+            obj.vertex_groups.new(name=bone.name.lower())
+
         # Custom Normals
         if use_custom_normals:
             # Store 'temp' normals in loops, since validate() may alter the
@@ -445,40 +395,11 @@ def load(self, context,
             if bpy.app.version < (4, 1, 0):
                 mesh.calc_normals()
 
-        if split_meshes:
-            obj_name = "%s_%s" % (model.name, mesh.name)
-        else:
-            obj_name = model.name
-
-        # Create the model object and link it to the scene
-        obj = bpy.data.objects.new(obj_name, mesh)
+        # Link the validated mesh object to the scene
         mesh_objs.append(obj)
 
         scene.collection.objects.link(obj)
         view_layer.objects.active = obj
-
-        # Create Vertex Groups
-        # These automatically weight the verts based on the deform groups
-        for bone in model.bones:
-            obj.vertex_groups.new(name=bone.name.lower())
-
-        # Assign the texture images to the current mesh (for Texture view)
-        if load_images:
-            # Build a material_id to Blender image map
-            material_image_map = [None] * len(model.materials)
-            for index, material in enumerate(model.materials):
-                if 'color' in material.images:
-                    color_map = material.images['color']
-                    if color_map in bpy.data.images:
-                        material_image_map[index] = bpy.data.images[color_map]
-
-            # DEPRECATED
-            '''
-            # Assign the image for each face
-            uv_faces = mesh.uv_textures[0].data
-            for index, face in enumerate(used_faces):
-                uv_faces[index].image = material_image_map[face.material_id]
-            '''
 
     if use_armature:
         # Create the skeleton
@@ -494,6 +415,7 @@ def load(self, context,
 
         bpy.ops.object.mode_set(mode='EDIT')
 
+        edit_bones = []
         for bone in model.bones:
             edit_bone = armature.edit_bones.new(bone.name.lower())
             edit_bone.use_local_location = False
@@ -506,10 +428,12 @@ def load(self, context,
             edit_bone.tail = offset + axis
             edit_bone.align_roll(roll)
 
-            if bone.parent != -1:
-                parent = armature.edit_bones[bone.parent]
-                if self.use_parents is True:
-                    edit_bone.parent = parent
+            edit_bones.append(edit_bone)
+
+        if use_parents:
+            for bone, edit_bone in zip(model.bones, edit_bones):
+                if 0 <= bone.parent < len(edit_bones):
+                    edit_bone.parent = edit_bones[bone.parent]
 
         # HACK: Force the pose bone list for the armature to be rebuilt
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -522,45 +446,17 @@ def load(self, context,
             modifier.use_bone_envelopes = False
             modifier.use_vertex_groups = True
 
-        # Attach the new skeleton to the existing one
-        if attach_model and skel_old is not None:
-            """
-            if 'tag_weapon' in skel_old.pose.bones:
-                arm_is_active = True
-                bpy.ops.object.mode_set(mode='EDIT')
-                matrix = skel_old.pose.bones["tag_weapon"].matrix.copy()
-                tag_weapon_mat = matrix
-                bpy.ops.object.mode_set(mode='OBJECT')
-            else:
-                arm_is_active = False
-            """
-
-            if attach_model:
+        if attach_model:
+            root_name = skel_obj.data.bones[0].name
+            target_name = {'j_gun': 'tag_weapon', 'tag_weapon': 'tag_weapon_right'}.get(
+                root_name, root_name)
+            if target_name in skel_old.data.bones:
                 skel_obj.parent = skel_old
-            if skel_obj.pose.bones[0].name == "j_gun":
-                skel_obj.parent_bone = "tag_weapon"
-            elif skel_obj.pose.bones[0].name == "tag_weapon":
-                 # Todo - add option to manually specify whether or not the user
-                 #        wants to attach to the left or right hand
-                skel_obj.parent_bone = "tag_weapon_right"
-            else:
-                if skel_obj.pose.bones[0].name in skel_old.pose.bones:
-                    skel_obj.parent_bone = skel_obj.pose.bones[0].name
-                else:
-                    print(("Warning: Armature '%s' may not"
-                           "merge correctly with '%s'") %
-                          (skel_obj.name, skel_old.name))
-                    skel_obj.parent_bone = skel_old.pose.bones[0].name
-            skel_obj.parent_type = 'BONE'
-            skel_obj.location = (0, -1, 0)
+                skel_obj.parent_type = 'BONE'
+                skel_obj.parent_bone = target_name
+                skel_obj.location = (0, -1, 0)
+            elif not merge_skeleton:
+                self.report({'WARNING'}, "Attachment bone '%s' was not found. Imported separately." % target_name)
 
-            # Is this necessary?
-            bpy.context.view_layer.update()
-
-            # Merge the skeletons together
             if merge_skeleton:
-                join_armatures(skel_old, skel_obj, mesh_objs)
-                bpy.ops.object.mode_set(mode='POSE')
-
-    # view_layer.update()
-    bpy.ops.object.mode_set(mode='OBJECT')
+                join_armatures(context, skel_old, skel_obj, mesh_objs)
